@@ -23,6 +23,24 @@ looks the tempo up online, and writes the number back.
 No pip installs needed — it uses only Python 3's standard library plus
 `osascript`.
 
+## apple_music_mood.py
+
+Tags selected tracks by **language + mood/energy** (e.g. `Tamil / Heavy Beat`)
+into the Grouping field, and fills BPM — using free audio features from
+[ReccoBeats](https://reccobeats.com) (energy, danceability, tempo). Works for
+Apple Music subscription streams, including regional/Tamil tracks that BPM
+databases don't cover.
+
+Setup: register a free [Spotify Developer app](https://developer.spotify.com/dashboard)
+(used only to look up track IDs), then:
+
+```sh
+export SPOTIFY_CLIENT_ID="..."
+export SPOTIFY_CLIENT_SECRET="..."
+python3 apple_music_mood.py --dry-run
+```
+
 ## Credits
 
 BPM data provided by [GetSongBPM](https://getsongbpm.com).
+Audio features provided by [ReccoBeats](https://reccobeats.com).

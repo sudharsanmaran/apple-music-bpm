@@ -67,7 +67,10 @@ USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
 #   energy   = calm (low) .. intense (high)
 #   valence  = sad/dark (low) .. happy/bright (high)
 #   dance    = no groove (low) .. very groovy (high)
-ENERGY_SPLIT = 0.55    # at/above = energetic; below = calm
+ENERGY_SPLIT = 0.70    # at/above = energetic; below = calm
+                       # (0.70 because ReccoBeats "energy" tracks loudness/
+                       #  production density — lush romantic melodies score
+                       #  ~0.65, so a lower line mislabels them as energetic.)
 VALENCE_SPLIT = 0.50   # at/above = bright/happy; below = dark/sad
 DANCE_SPLIT = 0.65     # within energetic+bright: at/above = Groove, below = Anthem
 

@@ -38,9 +38,16 @@ HOW TO RUN
     1. In Music, open a playlist and SELECT the tracks (Cmd-A = all in list).
     2. In Terminal:
          python3 apple_music_mood.py --dry-run   # preview, writes nothing
-         python3 apple_music_mood.py             # write Grouping (+ BPM)
-         python3 apple_music_mood.py --force     # overwrite existing values
+         python3 apple_music_mood.py             # fetch new songs, tag them
+         python3 apple_music_mood.py --force     # re-fetch + overwrite (reuses
+                                                 #   cached Spotify id, so no search)
+         python3 apple_music_mood.py --retune    # OFFLINE: re-bucket from cached
+                                                 #   Comments data, no network at all
          python3 apple_music_mood.py --no-bpm    # tag mood only, skip BPM
+
+Workflow: fetch each song once (the only rate-limited step); the raw numbers +
+Spotify id are saved into Comments. After that, tune the threshold constants
+below and run --retune to re-bucket the whole library instantly, offline.
 Make the Grouping / BPM columns visible in Music to watch values appear.
 """
 
@@ -139,7 +146,8 @@ def get_selected_tracks():
         '        try\n'
         '            set out to out & (database ID of t as text) & sep & '
         '(name of t) & sep & (artist of t) & sep & (duration of t as text) & sep & '
-        '(genre of t) & sep & (grouping of t) & sep & (bpm of t as text) & linefeed\n'
+        '(genre of t) & sep & (grouping of t) & sep & (bpm of t as text) & sep & '
+        '(comment of t) & linefeed\n'
         '        end try\n'
         '    end repeat\n'
         '    return out\n'
@@ -151,9 +159,9 @@ def get_selected_tracks():
         if not line.strip():
             continue
         parts = line.split(SEP)
-        if len(parts) < 7:
+        if len(parts) < 8:
             continue
-        dbid, name, artist, dur, genre, grouping, bpm = parts[:7]
+        dbid, name, artist, dur, genre, grouping, bpm, comment = parts[:8]
         try:
             dur_sec = float(dur)
         except ValueError:
@@ -165,7 +173,7 @@ def get_selected_tracks():
         tracks.append({
             "dbid": dbid, "name": name, "artist": artist,
             "dur_sec": dur_sec, "genre": genre,
-            "grouping": grouping, "cur_bpm": cur_bpm,
+            "grouping": grouping, "cur_bpm": cur_bpm, "comment": comment,
         })
     return tracks
 
@@ -392,8 +400,10 @@ def build_tags(lang, feats, energy, valence, dance, bpm, cat_label):
     return " ".join(tags)
 
 
-def full_comments(feats, bpm):
-    """Every raw audio number we have, stored in Comments for reference."""
+def full_comments(feats, bpm, spotify_id=None):
+    """Every raw audio number we have, stored in Comments. Doubles as a cache:
+    the numbers let us re-bucket offline (--retune), and spotify=<id> lets a
+    re-fetch skip the (rate-limited) Spotify search."""
     parts = []
     for k in ("energy", "valence", "danceability", "acousticness",
               "instrumentalness", "speechiness", "liveness", "loudness"):
@@ -405,7 +415,92 @@ def full_comments(feats, bpm):
     for k in ("key", "mode", "isrc"):
         if feats.get(k) is not None:
             parts.append(f"{k}={feats[k]}")
+    if spotify_id:
+        parts.append(f"spotify={spotify_id}")
     return " ".join(parts)
+
+
+def parse_comments(text):
+    """Parse a Comments string we wrote back into a feature dict (+ spotify id).
+    Returns {} if it doesn't look like our cache."""
+    if not text or "energy=" not in text:
+        return {}
+    out = {}
+    for tok in text.split():
+        if "=" not in tok:
+            continue
+        k, _, v = tok.partition("=")
+        if k in ("energy", "valence", "danceability", "acousticness",
+                 "instrumentalness", "speechiness", "liveness", "loudness"):
+            try:
+                out[k] = float(v)
+            except ValueError:
+                pass
+        elif k == "tempo":
+            try:
+                out["tempo"] = int(float(v))
+            except ValueError:
+                pass
+        elif k in ("key", "mode", "isrc", "spotify"):
+            out[k] = v
+    return out
+
+
+def classify_and_write(tr, feats, spotify_id, args):
+    """Classify a feature dict and write all fields. Used by both the network
+    fetch path and the offline --retune path. Returns 'tagged' or 'untagged'."""
+    label = f'{tr["name"]} — {tr["artist"]}'
+
+    if not feats or feats.get("energy") is None:
+        lang = language_bucket(tr["genre"], None)
+        grouping = f"{lang.lower()} untagged no-data"
+        if args.dry_run:
+            print(f"  ----    {label}  ->  '{grouping}'")
+        else:
+            try:
+                set_grouping(tr["dbid"], grouping)
+                print(f"  untag   {label}  ->  '{grouping}'")
+            except RuntimeError as e:
+                print(f"  FAIL    {label}  ({e})")
+        return "untagged"
+
+    energy = float(feats["energy"])
+    valence = float(feats.get("valence") or 0.5)
+    dance = float(feats.get("danceability") or 0.0)
+    cat = category_label(energy, valence, dance)
+    lang = language_bucket(tr["genre"], feats.get("isrc"))
+
+    bpm = None
+    if feats.get("tempo"):
+        try:
+            bpm = int(round(float(feats["tempo"])))
+        except (ValueError, TypeError):
+            bpm = None
+
+    grouping = build_tags(lang, feats, energy, valence, dance, bpm, cat)
+    comments = full_comments(feats, bpm, spotify_id or feats.get("spotify"))
+    rating = round(energy * 100)
+    movement = round(dance * 100)
+    nums = f"[rating={rating} mvt={movement}" + (f" bpm={bpm}]" if bpm else "]")
+
+    if args.dry_run:
+        print(f"  ----    {label}\n            {grouping}   {nums}")
+        return "tagged"
+    try:
+        set_grouping(tr["dbid"], grouping)
+        if not args.no_comments:
+            set_comments(tr["dbid"], comments)
+        if bpm and not args.no_bpm and (not tr["cur_bpm"] or args.force or args.retune):
+            set_bpm(tr["dbid"], bpm)
+        if WRITE_ENERGY_TO_RATING:
+            set_rating(tr["dbid"], rating)
+        if WRITE_DANCE_TO_MOVEMENT:
+            set_movement(tr["dbid"], movement)
+        print(f"  tag     {label}\n            {grouping}   {nums}")
+        return "tagged"
+    except RuntimeError as e:
+        print(f"  FAIL    {label}  ({e})")
+        return "untagged"
 
 
 # --- Main --------------------------------------------------------------------
@@ -413,14 +508,16 @@ def full_comments(feats, bpm):
 def main():
     p = argparse.ArgumentParser(description="Tag Apple Music tracks by language + mood, and fill BPM.")
     p.add_argument("--dry-run", action="store_true", help="Show results; write nothing")
-    p.add_argument("--force", action="store_true", help="Overwrite Grouping/BPM even if already set")
+    p.add_argument("--force", action="store_true", help="Re-fetch + overwrite even if already tagged")
+    p.add_argument("--retune", action="store_true",
+                   help="Re-bucket from cached Comments data only — NO network, no rate limit")
     p.add_argument("--no-bpm", action="store_true", help="Tag mood only; don't write BPM")
     p.add_argument("--no-comments", action="store_true", help="Don't write raw audio numbers into Comments")
     args = p.parse_args()
 
-    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+    if not args.retune and (not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET):
         sys.exit("Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars first "
-                 "(see setup notes at the top of this file).")
+                 "(see setup notes at the top of this file). Or use --retune (offline).")
 
     try:
         tracks = get_selected_tracks()
@@ -429,18 +526,34 @@ def main():
     if not tracks:
         sys.exit("No tracks selected. Select songs in Music, then run again.")
 
-    print(f"Selected {len(tracks)} track(s).\n")
+    mode = "RETUNE (offline)" if args.retune else "FETCH"
+    print(f"Selected {len(tracks)} track(s).  Mode: {mode}\n")
     tagged = untagged = skipped = 0
 
     for tr in tracks:
         label = f'{tr["name"]} — {tr["artist"]}'
+        cached = parse_comments(tr.get("comment", ""))
+
+        # --- offline re-tune: re-bucket from the numbers already in Comments ---
+        if args.retune:
+            if not cached:
+                print(f"  skip    {label}  (no cached data — fetch it once first)")
+                skipped += 1
+                continue
+            status = classify_and_write(tr, cached, None, args)
+            tagged += (status == "tagged"); untagged += (status == "untagged")
+            continue
+
+        # --- network fetch ---
         if tr["grouping"] and not args.force:
-            print(f"  skip    {label}  (grouping already '{tr['grouping']}')")
+            print(f"  skip    {label}  (already tagged)")
             skipped += 1
             continue
 
+        spotify_id = cached.get("spotify")   # reuse cached id -> skip the search
         try:
-            spotify_id = spotify_find_track(tr["name"], tr["artist"], tr["dur_sec"])
+            if not spotify_id:
+                spotify_id = spotify_find_track(tr["name"], tr["artist"], tr["dur_sec"])
             feats = reccobeats_features(spotify_id) if spotify_id else None
         except RateLimited as e:
             print(f"\n⚠  Rate limited by the API (Retry-After: {e.retry_after}s).")
@@ -449,67 +562,13 @@ def main():
             break
         time.sleep(REQUEST_PAUSE)
 
-        # No usable audio data -> group it for manual sorting, never guess.
-        if not feats or feats.get("energy") is None:
-            lang = language_bucket(tr["genre"], None)
-            grouping = f"{lang.lower()} untagged no-data"
-            why = "no Spotify match" if not spotify_id else "no ReccoBeats data"
-            if args.dry_run:
-                print(f"  ----    {label}  ->  '{grouping}'  ({why})")
-            else:
-                try:
-                    set_grouping(tr["dbid"], grouping)
-                    print(f"  untag   {label}  ->  '{grouping}'  ({why})")
-                except RuntimeError as e:
-                    print(f"  FAIL    {label}  (couldn't write: {e})")
-            untagged += 1
-            continue
-
-        energy = float(feats["energy"])
-        valence = float(feats.get("valence") or 0.5)
-        dance = float(feats.get("danceability") or 0.0)
-        cat = category_label(energy, valence, dance)
-        lang = language_bucket(tr["genre"], feats.get("isrc"))
-
-        bpm = None
-        if feats.get("tempo"):
-            try:
-                bpm = int(round(float(feats["tempo"])))
-            except (ValueError, TypeError):
-                bpm = None
-
-        grouping = build_tags(lang, feats, energy, valence, dance, bpm, cat)
-        comments = full_comments(feats, bpm)
-        rating = round(energy * 100)      # energy -> Rating field
-        movement = round(dance * 100)     # danceability -> Movement Number
-
-        nums = f"[rating={rating} mvt={movement}" + (f" bpm={bpm}]" if bpm else "]")
-        if args.dry_run:
-            print(f"  ----    {label}")
-            print(f"            {grouping}   {nums}")
-            tagged += 1
-        else:
-            try:
-                set_grouping(tr["dbid"], grouping)
-                if not args.no_comments:
-                    set_comments(tr["dbid"], comments)
-                if bpm and not args.no_bpm and (not tr["cur_bpm"] or args.force):
-                    set_bpm(tr["dbid"], bpm)
-                if WRITE_ENERGY_TO_RATING:
-                    set_rating(tr["dbid"], rating)
-                if WRITE_DANCE_TO_MOVEMENT:
-                    set_movement(tr["dbid"], movement)
-                print(f"  tag     {label}")
-                print(f"            {grouping}   {nums}")
-                tagged += 1
-            except RuntimeError as e:
-                print(f"  FAIL    {label}  (couldn't write: {e})")
+        status = classify_and_write(tr, feats, spotify_id, args)
+        tagged += (status == "tagged"); untagged += (status == "untagged")
 
     print(f"\nDone. Tagged: {tagged}   Untagged (no data): {untagged}   Skipped: {skipped}")
     if untagged:
         print("Untagged = no Spotify/ReccoBeats data (older or brand-new tracks).\n"
-              "They're grouped as '... / Untagged (no data)' — sort by Grouping in\n"
-              "Music to find and assign them by hand.")
+              "Grouped as '<lang> untagged no-data' — sort by Grouping to fix by hand.")
 
 
 if __name__ == "__main__":

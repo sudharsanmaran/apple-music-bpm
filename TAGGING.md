@@ -116,10 +116,24 @@ Always: **uncheck "Limit to N items"**, keep **"Live updating"** on.
 
 ## Tuning the boundaries
 
-- **Bands** (`energy-mid` etc.): edit the threshold constants near the top of
-  `apple_music_mood.py`, then re-run with `--force`.
 - **Live numeric** (energy via Rating, dance via Movement #, tempo via BPM):
   just edit the Smart Playlist rule — no re-run needed.
+- **Bands / categories** (`energy-mid`, Groove vs Anthem, etc.): edit the
+  threshold constants near the top of `apple_music_mood.py`, then run
+  **`--retune`** — it re-buckets every selected song from the numbers already
+  saved in Comments. **No network, no rate limit, instant.**
+
+## Caching — why you only fetch each song once
+
+Every song's Comments holds its raw numbers **and** `spotify=<id>`. So:
+
+- **`--retune`** re-classifies from Comments alone (no API calls).
+- **`--force`** (re-fetch) reuses the saved `spotify=<id>` to skip the
+  rate-limited Spotify search and go straight to ReccoBeats.
+- A normal run **skips** any song that already has a Grouping value.
+
+The only time the rate-limited Spotify search runs is the **first** time a song
+is seen. Everything after that is cached.
 
 ## Notes
 

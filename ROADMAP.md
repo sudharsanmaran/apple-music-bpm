@@ -18,15 +18,16 @@ Group the library by how songs *feel*.
 - [ ] Improve language detection (foreign-label Tamil songs misread as English)
 - [ ] Optional Deezer bridge to drop the Spotify dependency
 
-## 🔜 Stage 2 — Find similar songs
+## 🚧 Stage 2 — Find similar songs (started)
 
 Every song already has a feature vector. Similarity = distance between vectors.
+See `apple_music_similar.py`.
 
-- [ ] "Songs like this one" — nearest neighbours in feature space
-  (energy/valence/danceability/tempo/acousticness), optionally within the same
-  language or composer
-- [ ] Auto-generate a playlist seeded from a song or a small set
-- [ ] Tunable distance weights (e.g. weight groove + energy higher than key)
+- [x] "Songs like this one" — nearest neighbours in feature space, offline
+- [x] Auto-generate a playlist seeded from a song or a small set
+- [x] Tunable distance weights (the `WEIGHTS` dict)
+- [x] Optional same-language restriction
+- [ ] Restrict by composer / era as well
 - [ ] Cluster the library into N natural groupings instead of fixed categories
 
 ## 🧪 Stage 3 — Skip the bad parts

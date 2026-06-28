@@ -8,6 +8,7 @@ organizing an Apple Music library. Contributions of all sizes are welcome.
 | File | What it is |
 |------|------------|
 | `apple_music_mood.py` | the main tool — tagging, classification, caching |
+| `apple_music_similar.py` | "songs like this one" — offline nearest-neighbour over cached features |
 | `apple_music_bpm.py` | minimal BPM-only alternative (GetSongBPM) |
 | `TAGGING.md` | reference: every field, tag word, threshold, playlist recipe |
 | `ROADMAP.md` | the three-stage vision |

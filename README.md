@@ -48,8 +48,10 @@ python3 apple_music_mood.py --retune     # re-bucket offline from cached data (n
 The first time, macOS asks to let Terminal control Music — click **OK**.
 
 Then build a Smart Playlist: **File → New → Smart Playlist**, rule
-`Grouping contains Groove`. See **[TAGGING.md](TAGGING.md)** for the full set of
-fields, tag words, and playlist recipes.
+`Grouping contains Groove`. See **[TAGGING.md](TAGGING.md)** for the field/tag
+reference, and **[SMART_PLAYLISTS.md](SMART_PLAYLISTS.md)** for a cookbook of
+recipes (chill / focus / drive / workout / Tamil dance / …) and how to combine
+properties.
 
 ## How it works
 

@@ -364,6 +364,13 @@ def set_movement(dbid, value):
         f'(first track whose database ID is {dbid}) to {int(value)}')
 
 
+def _not_in_library(err):
+    """A track that isn't actually in your Library can't be edited (error -1731
+    'Unknown object type'). Detect that so we can give a helpful message."""
+    s = str(err)
+    return "-1731" in s or "Unknown object type" in s
+
+
 def _band(value, low_edge, high_edge, low, mid, high):
     if value < low_edge:
         return low
@@ -462,6 +469,9 @@ def classify_and_write(tr, feats, spotify_id, args):
                 set_grouping(tr["dbid"], grouping)
                 print(f"  untag   {label}  ->  '{grouping}'")
             except RuntimeError as e:
+                if _not_in_library(e):
+                    print(f"  NOLIB   {label}  (not in your Library — Add to Library, then re-run)")
+                    return "notinlib"
                 print(f"  FAIL    {label}  ({e})")
         return "untagged"
 
@@ -500,6 +510,9 @@ def classify_and_write(tr, feats, spotify_id, args):
         print(f"  tag     {label}\n            {grouping}   {nums}")
         return "tagged"
     except RuntimeError as e:
+        if _not_in_library(e):
+            print(f"  NOLIB   {label}  (not in your Library — Add to Library, then re-run)")
+            return "notinlib"
         print(f"  FAIL    {label}  ({e})")
         return "untagged"
 
@@ -531,7 +544,7 @@ def main():
 
     mode = "RETUNE (offline)" if args.retune else "FETCH"
     print(f"Selected {len(tracks)} track(s).  Mode: {mode}\n")
-    tagged = untagged = skipped = fetched = 0
+    tagged = untagged = skipped = fetched = notinlib = 0
 
     for tr in tracks:
         label = f'{tr["name"]} — {tr["artist"]}'
@@ -545,6 +558,7 @@ def main():
                 continue
             status = classify_and_write(tr, cached, None, args)
             tagged += (status == "tagged"); untagged += (status == "untagged")
+            notinlib += (status == "notinlib")
             continue
 
         # --- network fetch ---
@@ -571,6 +585,7 @@ def main():
 
         status = classify_and_write(tr, feats, spotify_id, args)
         tagged += (status == "tagged"); untagged += (status == "untagged")
+        notinlib += (status == "notinlib")
 
         fetched += 1
         if args.batch and fetched >= args.batch:
@@ -578,10 +593,15 @@ def main():
                   f"already-tagged songs are skipped automatically.")
             break
 
-    print(f"\nDone. Tagged: {tagged}   Untagged (no data): {untagged}   Skipped: {skipped}")
+    print(f"\nDone. Tagged: {tagged}   Untagged (no data): {untagged}   "
+          f"Skipped: {skipped}   Not in Library: {notinlib}")
     if untagged:
         print("Untagged = no Spotify/ReccoBeats data (older or brand-new tracks).\n"
               "Grouped as '<lang> untagged no-data' — sort by Grouping to fix by hand.")
+    if notinlib:
+        print(f"\n{notinlib} song(s) aren't in your Library so can't be edited. In Music,\n"
+              "select them and 'Add to Library' (and turn on Settings > General >\n"
+              "'Add Songs to Library'), then re-run to tag them.")
 
 
 if __name__ == "__main__":
